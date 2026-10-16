@@ -1,43 +1,38 @@
 use crate::{self as ui, Icon, theme};
 use iced::{
-    Element, Fill,
+    Element, Fill, Font,
     widget::{Space, button, column, container, row, scrollable, text},
 };
 
-pub fn tab<'a, M: Clone + 'a>(
-    title: &'a str,
-    kind: Icon,
-    active: bool,
-    select: M,
-    close: M,
-) -> Element<'a, M> {
-    let indicator = container(Space::new().width(5).height(5)).style(move |_| container::Style {
-        background: Some(if active { ui::ACCENT } else { ui::MUTED }.into()),
-        border: iced::border::rounded(3),
-        ..Default::default()
-    });
-    let content = row![
-        button(
-            row![indicator, ui::icon(kind, 14.0), text(title).size(13)]
-                .spacing(8)
-                .align_y(iced::Center)
-        )
-        .padding([6, 10])
-        .style(theme::quiet)
-        .on_press(select),
-        button(ui::icon(Icon::Close, 11.0))
-            .padding(6)
+/// Plain-text tab: `› title`, close affordance only on the active tab.
+pub fn tab<'a, M: Clone + 'a>(title: &'a str, active: bool, select: M, close: M) -> Element<'a, M> {
+    let label = |color: iced::Color| {
+        row![
+            text("›")
+                .font(Font::MONOSPACE)
+                .size(12)
+                .color(if active { ui::ACCENT } else { color }),
+            text(title).size(12).color(color),
+        ]
+        .spacing(6)
+        .align_y(iced::Center)
+    };
+    let mut content = row![
+        button(label(if active { ui::INK } else { ui::MUTED }))
+            .padding([5, 8])
             .style(theme::quiet)
-            .on_press(close)
+            .on_press(select),
     ]
     .align_y(iced::Center);
-    container(content)
-        .style(move |_| container::Style {
-            background: active.then_some(iced::Color::from_rgb8(195, 200, 207).into()),
-            border: iced::border::rounded(12),
-            ..Default::default()
-        })
-        .into()
+    if active {
+        content = content.push(
+            button(ui::icon(Icon::Close, 10.0))
+                .padding(5)
+                .style(theme::quiet)
+                .on_press(close),
+        );
+    }
+    content.into()
 }
 
 pub fn unified_bar<'a, M: Clone + 'a>(
@@ -108,11 +103,12 @@ pub fn floating_sidebar<'a, M: Clone + 'a>(
     if let Some(filter) = filter {
         contents = contents.push(container(filter).padding([0, 10]));
     }
-    ui::surface(
+    container(
         contents
             .push(container(body).height(Fill))
             .push(container(footer).padding([6, 12])),
     )
+    .style(theme::flat)
     .width(248)
     .height(Fill)
     .into()
@@ -124,6 +120,9 @@ pub struct ContextActions<M> {
     pub split_down: M,
     pub move_to_tab: Option<M>,
     pub scrollback: Option<M>,
+    pub find: Option<M>,
+    pub clear: Option<M>,
+    pub restart: Option<M>,
     pub close: M,
 }
 
@@ -146,7 +145,7 @@ pub fn context_menu<'a, M: Clone + 'a>(actions: ContextActions<M>) -> Element<'a
             ),
             ui::menu_item(Icon::Move, "Move pane to tab…", "", actions.move_to_tab),
             ui::widgets::divider(),
-            ui::menu_item(Icon::Search, "Find in scrollback", "⌘F · Phase 2", None),
+            ui::menu_item(Icon::Search, "Find in scrollback", "⌘F", actions.find),
             ui::menu_item(
                 Icon::File,
                 "Open scrollback in editor",
@@ -156,10 +155,10 @@ pub fn context_menu<'a, M: Clone + 'a>(actions: ContextActions<M>) -> Element<'a
             ui::menu_item(
                 Icon::Trash,
                 "Clear screen and scrollback",
-                "⇧⌘K · Phase 2",
-                None
+                "⇧⌘K",
+                actions.clear
             ),
-            ui::menu_item(Icon::Restart, "Restart shell", "Phase 2", None),
+            ui::menu_item(Icon::Restart, "Restart shell", "", actions.restart),
             ui::widgets::divider(),
             ui::menu_item(Icon::Close, "Close block", "⌘W", Some(actions.close))
         ]

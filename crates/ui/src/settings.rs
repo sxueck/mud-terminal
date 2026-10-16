@@ -123,18 +123,20 @@ impl Dialog {
                 .to_lowercase()
                 .contains(&self.search.trim().to_lowercase())
     }
-    pub fn view(&self) -> Element<'_, Edit> {
+    /// `max_height` is the tallest the dialog may grow: short pages hug their
+    /// content, long pages scroll inside it.
+    pub fn view(&self, max_height: f32) -> Element<'_, Edit> {
         let header = row![
-            container(ui::icon(Icon::Settings, 19.0))
-                .padding(10)
-                .style(|_| theme::box_style(theme::SELECTED, 10.0)),
+            container(ui::icon(Icon::Settings, 15.0))
+                .padding(7)
+                .style(|_| theme::box_style(theme::SELECTED, 8.0)),
             text("Settings")
-                .size(22)
+                .size(15)
                 .font(ui::widgets::heading_font())
                 .width(Fill),
             ui::action(Icon::Close, "Close settings · Esc", Edit::Cancel)
         ]
-        .spacing(12)
+        .spacing(9)
         .align_y(iced::Center);
         let tabs = iced::widget::Row::with_children(
             [
@@ -150,12 +152,14 @@ impl Dialog {
                         row![
                             ui::icons::tinted(
                                 kind,
-                                18.0,
+                                14.0,
                                 if active { ui::ACCENT } else { ui::INK }
                             ),
-                            text(label).size(12)
+                            text(label)
+                                .size(12)
+                                .color(if active { ui::ACCENT } else { ui::INK })
                         ]
-                        .spacing(8)
+                        .spacing(6)
                         .align_y(iced::Center),
                         container(Space::new().height(2).width(Fill)).style(move |_| {
                             container::Style {
@@ -164,32 +168,33 @@ impl Dialog {
                             }
                         })
                     ]
-                    .spacing(10),
+                    .spacing(6),
                 )
-                .padding([7, 12])
+                .padding([5, 10])
                 .style(theme::quiet)
                 .on_press(Edit::Category(category))
                 .into()
             }),
         )
-        .spacing(12);
+        .spacing(2);
         let search = container(
             row![
-                ui::icon(Icon::Search, 18.0),
+                ui::icon(Icon::Search, 14.0),
                 text_input("Search settings", &self.search)
                     .on_input(Edit::Search)
-                    .padding(10)
+                    .size(13)
+                    .padding(7)
                     .style(|t, s| iced::widget::text_input::Style {
                         border: iced::Border::default(),
                         ..theme::input(t, s)
                     })
             ]
-            .spacing(10)
+            .spacing(8)
             .align_y(iced::Center),
         )
-        .padding([2, 12])
-        .style(|_| theme::box_style(ui::CANVAS, 10.0));
-        let mut content = column![].spacing(20).padding(24);
+        .padding([0, 10])
+        .style(|_| theme::box_style(ui::CANVAS, 8.0));
+        let mut content = column![].spacing(14).padding([16, 18]);
         let searching = !self.search.trim().is_empty();
         if (searching || self.category == Category::General) && self.matches(GENERAL_TERMS) {
             content = content.push(self.general());
@@ -204,18 +209,20 @@ impl Dialog {
             content = content.push(ui::muted("No settings match your search."));
         }
         let mut footer = row![
-            ui::muted("Preferences are stored locally. No credentials are stored."),
+            text("Stored locally · no credentials are kept.")
+                .size(11)
+                .color(ui::MUTED),
             Space::new().width(Fill)
         ]
         .spacing(10)
         .align_y(iced::Center);
         if let Some(error) = &self.error {
-            footer = footer.push(text(error).size(12).color(theme::DANGER));
+            footer = footer.push(text(error).size(11).color(theme::DANGER));
         }
         footer = footer
             .push(
-                button(text("Cancel").size(13))
-                    .padding([9, 16])
+                button(text("Cancel").size(12))
+                    .padding([6, 12])
                     .style(theme::quiet)
                     .on_press_maybe((!self.saving).then_some(Edit::Cancel)),
             )
@@ -226,22 +233,22 @@ impl Dialog {
                     } else {
                         "Apply changes"
                     })
-                    .size(13),
+                    .size(12),
                 )
-                .padding([9, 16])
+                .padding([6, 12])
                 .style(theme::selected)
                 .on_press_maybe((!self.saving).then_some(Edit::Apply)),
             );
         container(column![
-            container(column![header, search, tabs].spacing(18)).padding(24),
+            container(column![header, search, tabs].spacing(12)).padding([14, 18]),
             ui::widgets::divider(),
             scrollable(content).height(Fill),
             ui::widgets::divider(),
-            container(footer).padding([14, 24])
+            container(footer).padding([10, 18])
         ])
-        .width(980)
+        .width(760)
         .height(Fill)
-        .max_height(820)
+        .max_height(max_height)
         .style(|t| container::Style {
             background: Some(ui::PANEL.into()),
             ..theme::popover(t)
@@ -249,26 +256,23 @@ impl Dialog {
         .into()
     }
     fn general(&self) -> Element<'_, Edit> {
-        let shell = ui::card(
-            column![
-                text("Shell").size(16),
-                text("Login shell for new blocks. Empty uses your system default.")
-                    .size(13)
-                    .color(ui::INK),
-                text_input(
-                    if cfg!(windows) {
-                        "System default"
-                    } else {
-                        "/bin/zsh"
-                    },
-                    &self.draft.shell
-                )
-                .on_input(Edit::Shell)
-                .padding(12)
-                .style(theme::input)
-            ]
-            .spacing(10),
-        );
+        let shell = ui::card(field(
+            "Login shell",
+            "Empty uses your system default.",
+            text_input(
+                if cfg!(windows) {
+                    "System default"
+                } else {
+                    "/bin/zsh"
+                },
+                &self.draft.shell,
+            )
+            .on_input(Edit::Shell)
+            .padding(8)
+            .size(13)
+            .style(theme::input)
+            .into(),
+        ));
         let launch = segmented(&[
             (
                 "Shell",
@@ -302,52 +306,73 @@ impl Dialog {
             ),
         ]);
         column![
-            ui::section("01 · General", "Shell, tabs and selection", "What new blocks run, where new tabs start, and what a selection does."),
-            text("Shell").size(14),
+            group("Shell"),
             shell,
-            text("Tabs and splits").size(14),
+            group("Tabs and splits"),
             ui::card(
                 column![
-                    setting_row("New tabs and splits open", "Choose the type of new tabs and splits.", launch),
+                    setting_row(
+                        "New tabs and splits open",
+                        "Choose the type of new tabs and splits.",
+                        launch
+                    ),
                     ui::widgets::divider(),
-                    setting_row("New tabs start in", "Splits inherit the directory of the pane they split.", home)
+                    setting_row(
+                        "New tabs start in",
+                        "Splits inherit the directory of the pane they split.",
+                        home
+                    )
                 ]
-                .spacing(16)
+                .spacing(12)
             ),
-            text("Selection").size(14),
+            group("Selection"),
             ui::card(setting_row(
                 "Copy on select",
                 "Finishing a selection puts it on the clipboard.",
-                toggler(self.draft.copy_on_select).on_toggle(Edit::Copy).into(),
+                toggler(self.draft.copy_on_select)
+                    .on_toggle(Edit::Copy)
+                    .into(),
             )),
-            text("Links").size(14),
-            ui::card(setting_row("Open links with", "Choose how links in terminal output open.", links)),
-            ui::muted("Shell, selection and link preferences take effect when the terminal engine is connected in Phase 2.")
+            group("Links"),
+            ui::card(setting_row(
+                "Open links with",
+                "Choose how links in terminal output open.",
+                links
+            )),
         ]
-        .spacing(18)
+        .spacing(10)
         .into()
     }
     fn models(&self) -> Element<'_, Edit> {
         column![
-            ui::section("02 · Models & API", "A direct line to your models", "OpenAI-compatible Chat Completions and Responses configuration."),
+            group("Endpoint"),
             ui::card(
                 column![
-                    text("API base URL").size(16),
-                    text_input("https://api.openai.com/v1", &self.draft.model.base_url)
-                        .on_input(Edit::BaseUrl)
-                        .padding(12)
-                        .style(theme::input),
-                    text("Model ID override").size(16),
-                    text_input("Enter a model ID", &self.draft.model.model_id)
-                        .on_input(Edit::Model)
-                        .padding(12)
-                        .style(theme::input)
+                    field(
+                        "API base URL",
+                        "OpenAI-compatible Chat Completions and Responses root.",
+                        text_input("https://api.openai.com/v1", &self.draft.model.base_url)
+                            .on_input(Edit::BaseUrl)
+                            .padding(8)
+                            .size(13)
+                            .style(theme::input)
+                            .into(),
+                    ),
+                    field(
+                        "Model ID override",
+                        "Leave empty to use the provider default.",
+                        text_input("Enter a model ID", &self.draft.model.model_id)
+                            .on_input(Edit::Model)
+                            .padding(8)
+                            .size(13)
+                            .style(theme::input)
+                            .into(),
+                    ),
                 ]
                 .spacing(12)
             ),
-            ui::muted("Configuration only · Model discovery, streaming and secure API credentials arrive in Phase 5.")
         ]
-        .spacing(18)
+        .spacing(10)
         .into()
     }
     fn autopilot(&self) -> Element<'_, Edit> {
@@ -369,37 +394,43 @@ impl Dialog {
             ),
         ]);
         column![
-            ui::section("03 · JEV Autopilot", "You set the boundaries", "Choose how the agent will request approval before running tools."),
+            group("Approval"),
             ui::card(
                 column![
-                    text("Approval mode").size(16),
+                    text("Approval mode").size(12),
                     mode,
-                    text("Dangerous actions must be blocked in every mode.").size(13)
+                    text("Dangerous actions must be blocked in every mode.")
+                        .size(11)
+                        .color(ui::MUTED)
                 ]
-                .spacing(14)
+                .spacing(8)
             ),
+            group("Confidence"),
             ui::card(
                 column![
                     row![
-                        text("Smart autopilot confidence").size(16).width(Fill),
-                        text(format!("{:.0}%", self.draft.confidence * 100.0)).color(ui::ACCENT)
+                        text("Smart autopilot confidence").size(12).width(Fill),
+                        text(format!("{:.0}%", self.draft.confidence * 100.0))
+                            .size(12)
+                            .color(ui::ACCENT)
                     ],
                     slider(0.5..=1.0, self.draft.confidence, Edit::Confidence).step(0.01_f32),
-                    ui::muted("Read-only probability must also be at least 85%.")
+                    text("Read-only probability must also be at least 85%")
+                        .size(11)
+                        .color(ui::MUTED)
                 ]
-                .spacing(14)
+                .spacing(8)
             ),
-            ui::muted("Configuration only · No AI tools execute in Phase 1. JEV auditing is implemented in Phase 5.")
         ]
-        .spacing(18)
+        .spacing(10)
         .into()
     }
 }
 fn segmented(options: &[(&str, bool, Edit)]) -> Element<'static, Edit> {
     let buttons = options.iter().map(|(label, active, message)| {
         let active = *active;
-        button(text((*label).to_owned()).size(13))
-            .padding([7, 13])
+        button(text((*label).to_owned()).size(12))
+            .padding([5, 10])
             .style(move |t, s| {
                 if active {
                     iced::widget::button::Style {
@@ -407,7 +438,7 @@ fn segmented(options: &[(&str, bool, Edit)]) -> Element<'static, Edit> {
                         border: iced::Border {
                             color: ui::BORDER,
                             width: 1.0,
-                            radius: 10.0.into(),
+                            radius: 7.0.into(),
                         },
                         ..theme::quiet(t, s)
                     }
@@ -420,17 +451,31 @@ fn segmented(options: &[(&str, bool, Edit)]) -> Element<'static, Edit> {
     });
     container(iced::widget::Row::with_children(buttons).spacing(2))
         .padding(3)
-        .style(|_| theme::box_style(iced::Color::from_rgb8(243, 244, 246), 13.0))
+        .style(|_| theme::box_style(iced::Color::from_rgb8(243, 244, 246), 9.0))
         .into()
 }
 fn setting_row<'a>(title: &'a str, help: &'a str, control: Element<'a, Edit>) -> Element<'a, Edit> {
     row![
-        column![text(title).size(16), text(help).size(12).color(ui::INK)]
-            .spacing(8)
+        column![text(title).size(12), text(help).size(11).color(ui::MUTED)]
+            .spacing(2)
             .width(Fill),
         control
     ]
-    .spacing(20)
+    .spacing(16)
     .align_y(iced::Center)
+    .into()
+}
+/// Group label above a card; the card carries the controls.
+fn group<'a>(label: &'a str) -> Element<'a, Edit> {
+    text(label).size(11).color(ui::MUTED).into()
+}
+/// Stacked label + control + help, used for text fields.
+fn field<'a>(label: &'a str, help: &'a str, control: Element<'a, Edit>) -> Element<'a, Edit> {
+    column![
+        text(label).size(12),
+        control,
+        text(help).size(11).color(ui::MUTED)
+    ]
+    .spacing(5)
     .into()
 }

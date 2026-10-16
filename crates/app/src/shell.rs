@@ -1,6 +1,8 @@
 use crate::{
     files::{self, Listing},
     settings::{self, Dialog, Edit, Preferences},
+    terminal_view,
+    terminals::{self, Terminals},
     workspace::{PaneBody, Workspace},
 };
 use iced::{
@@ -35,6 +37,9 @@ pub enum Command {
     SplitDown,
     MoveToTab,
     Scrollback,
+    FindScrollback,
+    ClearTerminal,
+    RestartShell,
     ClosePane,
     Settings,
     ToggleSidebar,
@@ -60,11 +65,13 @@ pub enum Message {
     MaximizePane(Pane),
     ClosePane(Pane),
     Input(Pane, String),
+    Terminal(u64, terminals::Event),
     Paste,
     Pasted(u64, Pane, Option<String>),
     Command(Command),
     OpenContext(Pane),
     Cursor(Point),
+    WindowHeight(f32),
     Dismiss,
     ToggleSidebar,
     Sidebar(Sidebar),
@@ -91,6 +98,7 @@ pub enum Message {
 #[derive(Debug)]
 pub struct App {
     pub workspace: Workspace,
+    pub(crate) terminals: Terminals,
     project_root: PathBuf,
     preferences: Preferences,
     preferences_loaded: bool,
@@ -106,6 +114,7 @@ pub struct App {
     profile: bool,
     context: Option<Point>,
     cursor: Point,
+    window_height: f32,
     notice: Option<String>,
     host_name: String,
     host_address: String,
@@ -140,6 +149,7 @@ impl App {
         Self {
             project_root: root.clone(),
             workspace: Workspace::new(root),
+            terminals: Terminals::default(),
             preferences: Preferences::default(),
             preferences_loaded: false,
             settings: None,
@@ -154,6 +164,7 @@ impl App {
             profile: false,
             context: None,
             cursor: Point::ORIGIN,
+            window_height: 920.0,
             notice: None,
             host_name: String::new(),
             host_address: String::new(),
@@ -163,26 +174,29 @@ impl App {
         }
     }
     pub fn subscription(&self) -> Subscription<Message> {
-        iced::event::listen_with(|event, status, _| match event {
+        let keyboard = iced::event::listen_with(|event, status, _| match event {
             Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                 Some(Message::Cursor(position))
+            }
+            Event::Window(iced::window::Event::Resized(size)) => {
+                Some(Message::WindowHeight(size.height))
             }
             Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 use iced::keyboard::{Key, key::Named};
                 if key == Key::Named(Named::Escape) {
                     return Some(Message::Dismiss);
                 }
-                if !modifiers.command()
-                    || modifiers.alt()
-                    || (cfg!(target_os = "macos") && modifiers.control())
-                {
+                if !terminal_view::workspace_shortcut(modifiers) {
                     return None;
                 }
                 match key.as_ref() {
-                    Key::Character("d") if modifiers.shift() => {
+                    Key::Character("d") if modifiers.shift() && cfg!(target_os = "macos") => {
                         Some(Message::Split(Axis::Horizontal))
                     }
                     Key::Character("d") => Some(Message::Split(Axis::Vertical)),
+                    Key::Character("e") if !cfg!(target_os = "macos") => {
+                        Some(Message::Split(Axis::Horizontal))
+                    }
                     Key::Character("t") => Some(Message::Command(Command::NewTab)),
                     Key::Character("a") if modifiers.shift() => {
                         Some(Message::Command(Command::NewAgent))
@@ -191,6 +205,10 @@ impl App {
                     Key::Character(",") => Some(Message::Command(Command::Settings)),
                     Key::Character("p") if modifiers.shift() => Some(Message::TogglePalette),
                     Key::Character("b") => Some(Message::ToggleSidebar),
+                    Key::Character("f") => Some(Message::Command(Command::FindScrollback)),
+                    Key::Character("k") if modifiers.shift() => {
+                        Some(Message::Command(Command::ClearTerminal))
+                    }
                     Key::Character("q") => Some(Message::Quit),
                     Key::Character("v") if status == iced::event::Status::Ignored => {
                         Some(Message::Paste)
@@ -199,10 +217,70 @@ impl App {
                 }
             }
             _ => None,
-        })
+        });
+        Subscription::batch([
+            keyboard,
+            self.terminals
+                .subscriptions(&self.workspace)
+                .map(|(id, event)| Message::Terminal(id, event)),
+        ])
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        if let Message::Terminal(id, event) = message {
+            let exists =
+                terminals::shell_ids(&self.workspace).any(|(session_id, _)| session_id == id);
+            if !exists {
+                return Task::none();
+            }
+            let background = matches!(
+                event,
+                terminals::Event::Ready(_) | terminals::Event::Backend(_)
+            );
+            if let terminals::Event::Backend(mud_terminal::PtyEvent::Error(error))
+            | terminals::Event::Ready(Err(error)) = &event
+            {
+                self.notice = Some(error.clone());
+            }
+            if !background
+                && (self.settings.is_some()
+                    || self.palette
+                    || self.profile
+                    || self.context.is_some())
+            {
+                return Task::none();
+            }
+            if matches!(event, terminals::Event::Grid(terminal_view::Action::Focus)) {
+                let pane = self
+                    .workspace
+                    .tab()
+                    .panes
+                    .iter()
+                    .find_map(|(pane, body)| match body {
+                        PaneBody::Terminal { session, .. } if session.id() == id => Some(*pane),
+                        _ => None,
+                    });
+                if let Some(pane) = pane {
+                    self.workspace.tab_mut().focus = pane;
+                }
+            }
+            let finding = matches!(event, terminals::Event::Find);
+            let task = self
+                .terminals
+                .update(id, event)
+                .map(move |event| Message::Terminal(id, event));
+            if finding
+                && self
+                    .terminals
+                    .live
+                    .get(&id)
+                    .is_some_and(|live| live.finding)
+            {
+                return Task::batch([task, widget::operation::focus(format!("find-{id}"))]);
+            }
+            return task;
+        }
         match message {
+            Message::Terminal(_, _) => {}
             Message::PreferencesLoaded(Ok(preferences)) => {
                 self.preferences = preferences;
                 self.preferences_loaded = true;
@@ -226,6 +304,7 @@ impl App {
                 self.notice = Some(format!("{}: {error}", path.display()));
             }
             Message::Cursor(point) => self.cursor = point,
+            Message::WindowHeight(height) => self.window_height = height,
             Message::Dismiss => {
                 if self
                     .settings
@@ -238,6 +317,8 @@ impl App {
                 self.palette = false;
                 self.profile = false;
                 self.context = None;
+                if let Some(PaneBody::Terminal { session, .. }) = self.workspace.tab().focused()
+                    && let Some(live) = self.terminals.live.get_mut(&session.id()) { live.finding = false; }
             }
             Message::Settings(edit) => return self.edit_settings(edit),
             Message::Persisted(result, prefs) => {
@@ -314,9 +395,13 @@ impl App {
             }
             Message::Pasted(id, pane, Some(contents)) => {
                 if let Some(tab) = self.workspace.tabs.iter_mut().find(|tab| tab.id == id)
-                    && let Some(PaneBody::Terminal { session, .. }) = tab.panes.get_mut(pane)
+                    && let Some(PaneBody::Terminal { session, kind }) = tab.panes.get_mut(pane)
                 {
-                    session.append_paste(&contents);
+                    if *kind == LaunchKind::Shell && !session.target().is_remote() {
+                        self.terminals.paste(session.id(), &contents);
+                    } else {
+                        session.append_paste(&contents);
+                    }
                 }
             }
             Message::Pasted(_, _, None) => {}
@@ -417,12 +502,13 @@ impl App {
                     return self.persist(prefs);
                 }
             }
-            Message::Notify => self.notice = Some("Phase 1 · Native UI shell. PTY: Phase 2 · Editor/Git: Phase 3 · SSH/SFTP: Phase 4 · AI/JEV: Phase 5.".into()),
+            Message::Notify => self.notice = Some("Local PTY · Command blocks · Automatic fullscreen TUI · Editor/Git: Phase 3 · SSH/SFTP: Phase 4 · AI/JEV: Phase 5.".into()),
             Message::ClearNotice => self.notice = None,
         }
         self.sync_scope()
     }
     fn sync_scope(&mut self) -> Task<Message> {
+        self.terminals.retain(&self.workspace);
         if self.workspace.is_remote() && self.sidebar == Sidebar::Git {
             self.sidebar = Sidebar::Files;
         }
@@ -505,6 +591,22 @@ impl App {
                 .split(Axis::Horizontal, self.preferences.launch_kind),
             Command::MoveToTab => self.workspace.move_to_tab(),
             Command::ClosePane => self.workspace.close_pane(),
+            Command::FindScrollback | Command::ClearTerminal | Command::RestartShell => {
+                if let Some(PaneBody::Terminal {
+                    session,
+                    kind: LaunchKind::Shell,
+                }) = self.workspace.tab().focused()
+                    && !session.target().is_remote()
+                {
+                    let id = session.id();
+                    let event = match command {
+                        Command::FindScrollback => terminals::Event::Find,
+                        Command::ClearTerminal => terminals::Event::Clear,
+                        _ => terminals::Event::Restart,
+                    };
+                    return self.update(Message::Terminal(id, event));
+                }
+            }
             Command::ToggleSidebar => self.sidebar_visible = !self.sidebar_visible,
             Command::Settings => {
                 if self.preferences_loaded {
@@ -514,7 +616,8 @@ impl App {
             Command::Scrollback => {
                 if let Some(PaneBody::Terminal { session, .. }) = self.workspace.tab().focused() {
                     let target = session.target().clone();
-                    let document = Document::from_scrollback("Scrollback", session.transcript());
+                    let document =
+                        Document::from_scrollback("Scrollback", self.terminals.transcript(session));
                     self.workspace.add(PaneBody::Editor { document, target });
                 }
             }
@@ -557,11 +660,7 @@ impl App {
         let base: Element<'_, Message> = container(layout)
             .width(Fill)
             .height(Fill)
-            .style(|_| container::Style {
-                background: Some(ui::WINDOW.into()),
-                text_color: Some(ui::INK),
-                ..Default::default()
-            })
+            .style(theme::window_frame)
             .into();
         if let Some(dialog) = &self.settings {
             stack![
@@ -570,14 +669,23 @@ impl App {
                     mouse_area(container(Space::new()).width(Fill).height(Fill).style(|_| {
                         container::Style {
                             background: Some(iced::Color::from_rgba8(62, 71, 88, 0.12).into()),
+                            border: iced::Border {
+                                radius: theme::WINDOW_RADIUS.into(),
+                                ..Default::default()
+                            },
                             ..Default::default()
                         }
                     }))
                     .on_press(Message::Dismiss)
                 ),
-                container(widget::opaque(dialog.view().map(Message::Settings)))
-                    .padding(28)
-                    .center(Fill)
+                container(widget::opaque(
+                    dialog
+                        // Shrink-to-content, but never taller than the window.
+                        .view((self.window_height - 96.0).clamp(360.0, 660.0))
+                        .map(Message::Settings),
+                ),)
+                .padding(28)
+                .center(Fill)
             ]
             .into()
         } else if let Some(point) = self.context {
@@ -637,7 +745,6 @@ impl App {
         let tabs = iced::widget::Row::with_children(self.workspace.tabs.iter().map(|tab| {
             ui::chrome::tab(
                 tab.focused().map(PaneBody::title).unwrap_or("~"),
-                tab.focused().map(pane_icon).unwrap_or(Icon::Terminal),
                 tab.id == self.workspace.tab().id,
                 Message::SelectTab(tab.id),
                 Message::CloseTab(tab.id),
@@ -976,7 +1083,24 @@ impl App {
         maximized: bool,
     ) -> pane_grid::Content<'a, Message> {
         let focused = pane == self.workspace.tab().focus;
+        let fullscreen = matches!(body, PaneBody::Terminal { session, .. } if self.terminals.live.get(&session.id()).and_then(|live| live.snapshot.as_ref()).is_some_and(|s| s.screen.mode == mud_terminal::RenderMode::Fullscreen));
         let body_view: Element<'_, Message> = match body {
+            PaneBody::Terminal {
+                session,
+                kind: LaunchKind::Shell,
+            } if !session.target().is_remote() => {
+                let id = session.id();
+                self.terminals
+                    .view(
+                        session,
+                        focused
+                            && self.settings.is_none()
+                            && !self.palette
+                            && !self.profile
+                            && self.context.is_none(),
+                    )
+                    .map(move |event| Message::Terminal(id, event))
+            }
             PaneBody::Terminal { session, kind } => {
                 let agent = *kind == LaunchKind::Agent;
                 let prompt = row![
@@ -1002,7 +1126,7 @@ impl App {
                     ui::muted(if agent {
                         "Agent draft only · Model execution arrives in Phase 5"
                     } else {
-                        "Input draft only · Local PTY connects in Phase 2"
+                        "Remote terminal connects in Phase 4"
                     })
                 ]
                 .spacing(16)
@@ -1033,24 +1157,43 @@ impl App {
                 .into()
             }
         };
-        let content = mouse_area(container(body_view).padding(18).width(Fill).height(Fill))
-            .on_right_press(Message::OpenContext(pane));
+        let content = mouse_area(
+            container(body_view)
+                .padding(if fullscreen {
+                    iced::Padding::ZERO
+                } else {
+                    iced::Padding {
+                        top: 8.0,
+                        bottom: 0.0,
+                        left: 12.0,
+                        right: 12.0,
+                    }
+                })
+                .width(Fill)
+                .height(Fill),
+        )
+        .on_right_press(Message::OpenContext(pane));
+        let split = self.workspace.tab().panes.len() > 1;
         let mut pane_content =
             pane_grid::Content::new(content).style(move |_| iced::widget::container::Style {
                 border: iced::Border {
-                    color: if focused && self.workspace.tab().panes.len() > 1 {
+                    color: if focused && split {
                         iced::Color::from_rgb8(162, 191, 192)
                     } else {
                         ui::BORDER
                     },
-                    width: 1.0,
-                    radius: 10.0.into(),
+                    // A single pane sits flush in the window; only splits need
+                    // their own outline.
+                    width: if split { 1.0 } else { 0.0 },
+                    radius: 0.0.into(),
                 },
                 background: Some(ui::CANVAS.into()),
                 text_color: Some(ui::INK),
                 ..Default::default()
             });
-        if self.workspace.tab().panes.len() > 1 || matches!(body, PaneBody::Editor { .. }) {
+        if !fullscreen
+            && (self.workspace.tab().panes.len() > 1 || matches!(body, PaneBody::Editor { .. }))
+        {
             let title = row![
                 ui::icon(pane_icon(body), 13.0),
                 text(body.title()).size(12),
@@ -1095,6 +1238,9 @@ impl App {
             move_to_tab: (self.workspace.tab().panes.len() > 1)
                 .then_some(Message::Command(Command::MoveToTab)),
             scrollback: terminal.then_some(Message::Command(Command::Scrollback)),
+            find: terminal.then_some(Message::Command(Command::FindScrollback)),
+            clear: terminal.then_some(Message::Command(Command::ClearTerminal)),
+            restart: terminal.then_some(Message::Command(Command::RestartShell)),
             close: Message::Command(Command::ClosePane),
         })
     }
@@ -1225,6 +1371,9 @@ mod tests {
     fn asynchronous_paste_targets_original_tab_not_current_focus() {
         let mut app = App::new(PathBuf::from("/tmp"));
         let pane = app.workspace.tab().focus;
+        if let Some(PaneBody::Terminal { kind, .. }) = app.workspace.tab_mut().panes.get_mut(pane) {
+            *kind = LaunchKind::Agent;
+        }
         app.workspace.new_terminal(LaunchKind::Agent, None);
         let _ = app.update(Message::Pasted(0, pane, Some("draft".into())));
         if let Some(PaneBody::Terminal { session, .. }) = app.workspace.tabs[0].panes.get(pane) {

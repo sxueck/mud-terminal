@@ -4,6 +4,10 @@ mod files;
 mod settings;
 #[path = "../src/shell.rs"]
 mod shell;
+#[path = "../src/terminal_view.rs"]
+mod terminal_view;
+#[path = "../src/terminals.rs"]
+mod terminals;
 #[path = "../src/workspace.rs"]
 mod workspace;
 
@@ -15,12 +19,13 @@ use std::{fs, io::BufWriter, path::PathBuf, time::Duration};
 fn main() -> iced::Result {
     iced::application(Check::boot, Check::update, Check::view)
         .title("mud — Visual check")
-        .theme(iced::Theme::Light)
+        .theme(mud_ui::theme::theme())
         .subscription(Check::subscription)
         .window(iced::window::Settings {
             size: iced::Size::new(1440.0, 920.0),
             min_size: Some(iced::Size::new(900.0, 640.0)),
             decorations: false,
+            transparent: true,
             ..Default::default()
         })
         .default_font(iced::Font::with_name(if cfg!(target_os = "macos") {

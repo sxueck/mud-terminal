@@ -1,7 +1,7 @@
 use crate::{Icon, icon, theme};
 use iced::{
     Element, Fill, Font,
-    widget::{Space, button, column, container, row, text, tooltip},
+    widget::{button, container, row, text, tooltip},
 };
 
 pub fn divider<'a>() -> iced::widget::Rule<'a> {
@@ -24,14 +24,33 @@ pub fn surface<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> iced::widget::C
 }
 pub fn card<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> iced::widget::Container<'a, M> {
     container(content)
-        .padding(18)
+        .padding(14)
         .width(Fill)
-        .style(|_| theme::box_style(theme::CANVAS, 14.0))
+        .style(|_| theme::box_style(theme::CANVAS, 10.0))
 }
 pub fn action<'a, M: Clone + 'a>(kind: Icon, hint: &'a str, message: M) -> Element<'a, M> {
     tooltip(
-        button(icon(kind, 17.0))
-            .padding(8)
+        button(icon(kind, 15.0))
+            .padding(6)
+            .style(theme::quiet)
+            .on_press(message),
+        container(text(hint).size(12))
+            .padding(7)
+            .style(theme::popover),
+        tooltip::Position::Bottom,
+    )
+    .into()
+}
+/// Same affordance as [`action`] but with a text glyph, for controls that have
+/// no icon asset.
+pub fn action_button<'a, M: Clone + 'a>(
+    glyph: impl Into<Element<'a, M>>,
+    hint: &'a str,
+    message: M,
+) -> Element<'a, M> {
+    tooltip(
+        button(glyph)
+            .padding(6)
             .style(theme::quiet)
             .on_press(message),
         container(text(hint).size(12))
@@ -78,18 +97,5 @@ pub fn menu_item<'a, M: Clone + 'a>(
         }
         style
     })
-    .into()
-}
-pub fn section<'a, M: 'a>(number: &'a str, title: &'a str, description: &'a str) -> Element<'a, M> {
-    column![
-        text(number)
-            .font(Font::MONOSPACE)
-            .size(13)
-            .color(theme::ACCENT),
-        text(title).size(22).font(heading_font()).color(theme::INK),
-        text(description).size(14).color(theme::INK),
-        Space::new().height(10)
-    ]
-    .spacing(12)
     .into()
 }

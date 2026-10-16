@@ -1,4 +1,15 @@
-//! Phase 1 terminal domain model.
+//! Session identity is separate from live PTY ownership so moving panes cannot restart a shell.
+
+pub mod backend;
+pub mod blocks;
+pub mod model;
+pub mod screen;
+pub mod shell;
+pub mod text;
+
+pub use backend::{run_local, run_local_with_shell};
+pub use model::{Block, Cell, PtyEvent, PtyHandle, RenderMode, Request, Screen, Snapshot};
+
 use std::fmt;
 use std::path::PathBuf;
 
@@ -26,10 +37,10 @@ impl fmt::Display for SessionTarget {
     }
 }
 
-/// A terminal session shell around input and a paste draft.
-/// Produces no fake terminal output; rendering is a later phase.
+/// Cloning preserves session identity; live output belongs to the backend, not the Agent draft.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalSession {
+    id: u64,
     target: SessionTarget,
     input: String,
     transcript: String,
@@ -37,11 +48,17 @@ pub struct TerminalSession {
 
 impl TerminalSession {
     pub fn new(target: SessionTarget) -> Self {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
+            id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             target,
             input: String::new(),
             transcript: String::new(),
         }
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     pub fn target(&self) -> &SessionTarget {
