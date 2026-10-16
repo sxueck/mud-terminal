@@ -1,0 +1,22 @@
+[package]
+name = "mud-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+iced.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+mud-ui = { path = "../ui" }
+mud-terminal = { path = "../terminal" }
+mud-ssh = { path = "../ssh" }
+mud-editor = { path = "../editor" }
+mud-agent = { path = "../agent" }
+
+[dev-dependencies]
+png = "0.18"
+
+[lints]
+workspace = true
