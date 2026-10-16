@@ -3,13 +3,15 @@ use crate::{
     workspace::{PaneBody, Workspace},
 };
 use iced::{
-    Element, Fill, Font, Subscription, Task,
+    Border, Color, Element, Fill, Pixels, Subscription, Task,
     futures::{SinkExt, Stream},
-    widget::{Space, button, column, container, row, scrollable, stack, text, text_input},
+    widget::{
+        Space, button, column, container, mouse_area, row, scrollable, stack, text, text_input,
+    },
 };
 use mud_agent::LaunchKind;
 use mud_terminal::{
-    PtyEvent, PtyHandle, RenderMode, Request, SessionTarget, Snapshot, TerminalSession,
+    Block, PtyEvent, PtyHandle, RenderMode, Request, SessionTarget, Snapshot, TerminalSession,
 };
 use mud_ui::{self as ui, Icon, theme};
 use std::{
@@ -240,95 +242,65 @@ impl Terminals {
         // One continuous document: finished blocks, then the live tail cropped
         // to the rows after the last prompt. History and live share a single
         // scroll, and the grid no longer repeats a finished block's output.
-        let mut document = column![].spacing(0);
-        let mut shown = false;
+        let mut document = column![].spacing(2);
         for block in &snapshot.blocks {
             if live.selected.is_some_and(|id| id != block.id) {
                 continue;
             }
             let selected = Some(block.id) == live.selected;
-            let status = match block.exit_code {
-                Some(0) => "exit 0".to_owned(),
-                Some(code) => format!("exit {code}"),
-                None => "interrupted".to_owned(),
-            };
-            let duration = block
-                .duration
-                .map(|d| format!(" · {:.3}s", d.as_secs_f64()))
-                .unwrap_or_default();
-            let header = row![
-                text("›").font(Font::MONOSPACE).size(13).color(ui::ACCENT),
-                button(text(&block.command).font(Font::MONOSPACE).size(13))
-                    .padding([3, 6])
-                    .on_press(Event::Select(block.id))
-                    .style(theme::quiet),
-                Space::new().width(Fill),
-                text(format!("{status}{duration}")).size(11).color(
-                    if block.exit_code.is_some_and(|c| c != 0) {
-                        theme::DANGER
-                    } else {
-                        ui::MUTED
-                    },
-                ),
-                ui::action(Icon::Copy, "Copy block output", Event::Copy(block.id)),
-            ]
-            .spacing(7)
-            .align_y(iced::Center);
-            if shown {
-                document = document.push(ui::widgets::divider());
-            }
-            shown = true;
             document = document.push(
-                container(
-                    column![
-                        header,
-                        container(
-                            text(&block.output)
-                                .font(Font::MONOSPACE)
-                                .size(13)
-                                .width(Fill),
-                        )
-                        .padding(iced::Padding {
-                            left: 15.0,
+                mouse_area(
+                    container(block_card(block, selected))
+                        .padding([6, 8])
+                        .width(Fill)
+                        .style(move |_| container::Style {
+                            background: selected.then_some(theme::SELECTED.into()),
+                            border: Border {
+                                color: if selected {
+                                    theme::ACCENT
+                                } else {
+                                    Color::TRANSPARENT
+                                },
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            text_color: Some(theme::INK),
                             ..Default::default()
                         }),
-                    ]
-                    .spacing(2),
                 )
-                .padding([5, 0])
-                .width(Fill)
-                .style(move |_| container::Style {
-                    background: selected.then_some(theme::SELECTED.into()),
-                    text_color: Some(theme::INK),
-                    ..Default::default()
-                }),
+                .on_press(Event::Select(block.id)),
             );
         }
         if let Some(running) = &snapshot.running {
             document = document.push(
                 container(
                     row![
-                        text("›").font(Font::MONOSPACE).size(13).color(ui::ACCENT),
+                        text("›")
+                            .font(ui::MONO)
+                            .size(BLOCK_FONT)
+                            .color(ui::ACCENT)
+                            .width(MARKER),
                         text(&running.command)
-                            .font(Font::MONOSPACE)
-                            .size(13)
-                            .color(ui::ACCENT),
+                            .font(ui::MONO)
+                            .size(BLOCK_FONT)
+                            .color(ui::ACCENT)
+                            .width(Fill),
                         text("running").size(11).color(ui::MUTED),
+                        Space::new().width(ACTION_WIDTH),
                     ]
-                    .spacing(7),
+                    .align_y(iced::Center),
                 )
-                .padding([7, 6])
+                .padding([6, 8])
                 .width(Fill),
             );
         }
         if !snapshot.blocks.is_empty() {
-            // Deliberately quiet: a 11 px muted label and bare glyphs, no chrome.
+            // Warp keeps block navigation off the document: bare glyphs, no label.
             let nav = |glyph: &'static str, message: Event, hint: &'static str| {
                 ui::action_button(text(glyph).size(13).color(ui::MUTED), hint, message)
             };
             contents = contents.push(
                 row![
-                    ui::muted("Command blocks"),
                     Space::new().width(Fill),
                     nav("↑", Event::Step(-1), "Previous block · ⇧⌘↑"),
                     nav("↓", Event::Step(1), "Next block · ⇧⌘↓"),
@@ -403,7 +375,7 @@ impl Terminals {
         if let Some((line, result)) = matches.get(live.match_index.min(count.saturating_sub(1))) {
             card = card.push(
                 text(format!("{}  {}", line + 1, result))
-                    .font(Font::MONOSPACE)
+                    .font(ui::MONO)
                     .size(12)
                     .color(ui::MUTED),
             );
@@ -447,6 +419,84 @@ fn history_id(id: u64) -> iced::advanced::widget::Id {
     iced::advanced::widget::Id::from(format!("blocks-{id}"))
 }
 
+/// Blocks are drawn with the grid's own metrics so finished output and the
+/// live tail read as one continuous document.
+const BLOCK_FONT: f32 = terminal_view::FONT_SIZE;
+const BLOCK_LINE: f32 = terminal_view::CELL_HEIGHT;
+/// `›` marker column; the command and its output share this left edge.
+const MARKER: f32 = 18.0;
+
+/// Reserved column for the per-block copy action, so rows never shift.
+const ACTION_WIDTH: f32 = 27.0;
+
+/// Warp keeps a block's status to the essentials: elapsed time, and the exit
+/// code only when the command failed.
+fn block_status(block: &Block) -> (String, Color) {
+    let elapsed = block
+        .duration
+        .map(|d| format!("{:.2}s", d.as_secs_f64()))
+        .unwrap_or_default();
+    match block.exit_code {
+        Some(0) => (elapsed, ui::MUTED),
+        Some(code) => (
+            if elapsed.is_empty() {
+                format!("exit {code}")
+            } else {
+                format!("exit {code} · {elapsed}")
+            },
+            theme::DANGER,
+        ),
+        None => (
+            if elapsed.is_empty() {
+                "interrupted".to_owned()
+            } else {
+                format!("interrupted · {elapsed}")
+            },
+            theme::DANGER,
+        ),
+    }
+}
+
+/// One Warp-style block: command line, then its output flush under it. The
+/// whole card is clickable to isolate that one block.
+fn block_card<'a>(block: &'a Block, selected: bool) -> iced::widget::Column<'a, Event> {
+    let (status, status_color) = block_status(block);
+    let mut lines = column![
+        row![
+            text("›")
+                .font(ui::MONO)
+                .size(BLOCK_FONT)
+                .color(if selected { ui::ACCENT } else { ui::MUTED })
+                .width(MARKER),
+            text(&block.command)
+                .font(ui::MONO)
+                .size(BLOCK_FONT)
+                .width(Fill),
+            text(status).size(11).color(status_color),
+            ui::action(Icon::Copy, "Copy block output", Event::Copy(block.id)),
+        ]
+        .align_y(iced::Center)
+    ]
+    .spacing(2);
+    if !block.output.is_empty() {
+        // Absolute line height keeps block output on the grid's 17 px rows.
+        lines = lines.push(
+            container(
+                text(&block.output)
+                    .font(ui::MONO)
+                    .size(BLOCK_FONT)
+                    .line_height(text::LineHeight::Absolute(Pixels(BLOCK_LINE)))
+                    .width(Fill),
+            )
+            .padding(iced::Padding {
+                left: MARKER,
+                ..Default::default()
+            }),
+        );
+    }
+    lines
+}
+
 fn terminal_stream(data: &(u64, PathBuf)) -> impl Stream<Item = (u64, Event)> + use<> {
     let (id, directory) = data.clone();
     iced::stream::channel(16, async move |mut output| {
@@ -470,6 +520,26 @@ fn terminal_stream(data: &(u64, PathBuf)) -> impl Stream<Item = (u64, Event)> + 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_status_shows_exit_code_only_when_the_command_failed() {
+        let block = |exit_code| Block {
+            id: 0,
+            command: "true".into(),
+            output: String::new(),
+            exit_code,
+            duration: Some(std::time::Duration::from_millis(1234)),
+        };
+        assert_eq!(block_status(&block(Some(0))), ("1.23s".into(), ui::MUTED));
+        assert_eq!(
+            block_status(&block(Some(2))),
+            ("exit 2 · 1.23s".into(), theme::DANGER)
+        );
+        assert_eq!(
+            block_status(&block(None)),
+            ("interrupted · 1.23s".into(), theme::DANGER)
+        );
+    }
     #[test]
     fn only_local_shells_start_processes_and_moves_preserve_identity() {
         let mut workspace = Workspace::new(PathBuf::from("/tmp"));

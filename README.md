@@ -29,6 +29,11 @@ in the session's original directory. Restart discards the session history.
   tail. The tail is cropped to the rows after the last `OSC 133;A` prompt and
   sized to the rows that actually hold text, so a finished command's output is
   never shown twice and empty screen rows cannot push the prompt out of view
+- Blocks and the live tail share one typography: a named monospace face (Menlo
+  on macOS, Consolas on Windows) on the grid's 14 px / 17 px metrics, because
+  `Family::Monospace` loses cosmic-text's CJK fallback and silently drops wide
+  glyphs. The caret is a 2 px bar in Blocks mode and stays cell-sized in
+  fullscreen TUIs, where vim and htop need it over a character
 - Alternate-screen requests (`?1049`, `?47`, `?1047`) switch the pane to an
   exclusive terminal grid, removing Block/search layout and pane padding; leaving
   the alternate screen restores Blocks

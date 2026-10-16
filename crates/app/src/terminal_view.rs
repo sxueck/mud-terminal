@@ -12,25 +12,24 @@ use iced::advanced::widget::Tree;
 use iced::advanced::widget::Widget;
 use iced::advanced::{Clipboard, Shell};
 use iced::{
-    Background, Color, Element, Event, Length, Rectangle, Size,
-    font::{Family, Weight},
-    keyboard, mouse,
+    Background, Color, Element, Event, Length, Rectangle, Size, font::Weight, keyboard, mouse,
 };
 
 /// Fixed monospace metrics for a 14 px grid (stable, no measurement needed).
-const FONT_SIZE: f32 = 14.0;
-const CELL_WIDTH: f32 = 8.4;
-const CELL_HEIGHT: f32 = 17.0;
+/// Published so the Blocks view can render command output with the same row
+/// height and glyph size as the live tail.
+pub const FONT_SIZE: f32 = 14.0;
+pub const CELL_WIDTH: f32 = 8.4;
+pub const CELL_HEIGHT: f32 = 17.0;
+/// Blocks mode draws a caret instead of a full cell: the tail is a prompt the
+/// user is typing into. Full-screen TUIs keep the cell-sized block, which
+/// vim/htop need to show the cursor over a glyph.
+const CURSOR_BAR: f32 = 2.0;
 /// Default SGR-style black/white palette assumptions for skipping fills.
 const DEFAULT_FG: [u8; 3] = [31, 35, 40];
 const DEFAULT_BG: [u8; 3] = [255, 255, 255];
 
-const MONO: iced::Font = iced::Font {
-    family: Family::Monospace,
-    weight: Weight::Normal,
-    stretch: iced::font::Stretch::Normal,
-    style: iced::font::Style::Normal,
-};
+const MONO: iced::Font = mud_ui::fonts::MONO;
 const MONO_BOLD: iced::Font = iced::Font {
     weight: Weight::Bold,
     ..MONO
@@ -429,7 +428,11 @@ where
         if let Some((col, row)) = self.screen.cursor.filter(|_| self.focused) {
             let x = bounds.x + col as f32 * CELL_WIDTH;
             let y = bounds.y + row.saturating_sub(hidden) as f32 * CELL_HEIGHT;
-            let rect = Rectangle::new(iced::Point::new(x, y), Size::new(CELL_WIDTH, CELL_HEIGHT));
+            let width = match self.screen.mode {
+                mud_terminal::RenderMode::Blocks => CURSOR_BAR,
+                mud_terminal::RenderMode::Fullscreen => CELL_WIDTH,
+            };
+            let rect = Rectangle::new(iced::Point::new(x, y), Size::new(width, CELL_HEIGHT));
             if rect.intersects(&clip) {
                 renderer.fill_quad(
                     Quad {

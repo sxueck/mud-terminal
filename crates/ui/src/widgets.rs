@@ -82,7 +82,7 @@ pub fn menu_item<'a, M: Clone + 'a>(
         row![
             icon(kind, 16.0),
             text(label).size(13).width(Fill),
-            text(key).size(11).font(Font::MONOSPACE)
+            text(key).size(11).font(crate::fonts::MONO)
         ]
         .spacing(12)
         .align_y(iced::Center),

@@ -1,6 +1,6 @@
 use crate::{self as ui, Icon, theme};
 use iced::{
-    Element, Fill, Font,
+    Element, Fill,
     widget::{Space, button, column, container, row, scrollable, text},
 };
 
@@ -9,7 +9,7 @@ pub fn tab<'a, M: Clone + 'a>(title: &'a str, active: bool, select: M, close: M)
     let label = |color: iced::Color| {
         row![
             text("›")
-                .font(Font::MONOSPACE)
+                .font(crate::fonts::MONO)
                 .size(12)
                 .color(if active { ui::ACCENT } else { color }),
             text(title).size(12).color(color),

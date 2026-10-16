@@ -6,7 +6,7 @@ use crate::{
     workspace::{PaneBody, Workspace},
 };
 use iced::{
-    Element, Event, Fill, Font, Point, Subscription, Task,
+    Element, Event, Fill, Point, Subscription, Task,
     widget::{
         self, Space, button, column, container, mouse_area,
         pane_grid::{self, Axis, Pane},
@@ -1104,13 +1104,13 @@ impl App {
             PaneBody::Terminal { session, kind } => {
                 let agent = *kind == LaunchKind::Agent;
                 let prompt = row![
-                    text("~").size(14).font(Font::MONOSPACE).color(ui::ACCENT),
-                    text(">").size(14).font(Font::MONOSPACE),
+                    text("~").size(14).font(ui::MONO).color(ui::ACCENT),
+                    text(">").size(14).font(ui::MONO),
                     text_input(if agent { "Agent draft" } else { "" }, session.input())
                         .id(format!("draft-{}-{pane:?}", self.workspace.tab().id))
                         .on_input(move |input| Message::Input(pane, input))
                         .padding(0)
-                        .font(Font::MONOSPACE)
+                        .font(ui::MONO)
                         .size(14)
                         .style(|t, s| widget::text_input::Style {
                             background: iced::Color::TRANSPARENT.into(),
@@ -1142,13 +1142,10 @@ impl App {
                                 .collect::<Vec<_>>()
                                 .join("\n")
                         )
-                        .font(Font::MONOSPACE)
+                        .font(ui::MONO)
                         .size(13)
                         .color(ui::MUTED),
-                        text(document.text())
-                            .size(13)
-                            .font(Font::MONOSPACE)
-                            .width(Fill)
+                        text(document.text()).size(13).font(ui::MONO).width(Fill)
                     ]
                     .spacing(20),
                 )
